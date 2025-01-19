@@ -200,8 +200,12 @@ namespace PLAYERTWO.PlatformerProject
 				return false;
 
 			// reachability needs to be handled after visibility... 
-			if (!m_weapon.IsWithinReach(coll.transform, m_weapon.Speed * autoReturnAfter))
-				return false;
+			//if (!m_weapon.IsWithinReach(coll.transform, m_weapon.Speed * autoReturnAfter))
+			//	return false;
+
+			if (!m_weapon.IsWithinReach(coll.transform, autoAimDistance))
+    return false;
+
 
 			if (autoAimRigidBodies && coll.attachedRigidbody != null)
 				return true;
@@ -222,109 +226,84 @@ namespace PLAYERTWO.PlatformerProject
 				return AutoAimFilterPost(coll);
 
 			return false;
+			
+			Debug.Log($"Checking target: {coll.name}, Visible: {vpPos}, Reachable: {m_weapon.IsWithinReach(coll.transform, autoAimDistance)}");
+
 		}
 
 		private void UpdateAutoAim(Vector3 throwDirectonVector, bool forceReset = false)
-		{
-			if (!forceReset && m_autoAimCollider != null && m_autoAimFrame == Time.frameCount)
-				return;
+{
+    if (!forceReset && m_autoAimCollider != null && m_autoAimFrame == Time.frameCount)
+        return;
 
-			m_autoAimCollider = null;
-			if (!forceReset && autoAimAngle > 0 && autoAimDistance > 0)
-			{
-				int resolution = Mathf.Min(1, Mathf.CeilToInt(autoAimDistance / 10));
+    m_autoAimCollider = null;
+    if (!forceReset && autoAimAngle > 0 && autoAimDistance > 0)
+    {
+        int resolution = Mathf.Max(10, Mathf.CeilToInt(autoAimDistance / 10)); // Use higher resolution
+        GetCollidersWithinView(
+            m_colliderList,
+            m_player.transform.position,
+            throwDirectonVector,
+            autoAimDistance,
+            autoAimAngle,
+            resolution,
+            Physics.DefaultRaycastLayers);
 
-				GetCollidersWithinView(
-					m_colliderList,
-					m_player.transform.position,
-					throwDirectonVector,
-					autoAimDistance,
-					autoAimAngle,
-					resolution,
-					Physics.DefaultRaycastLayers);
+        float min = float.MaxValue;
+		float distanceWeight = 0.5f;
+				float angleWeight = 0.5f;
 
-				float min = float.MaxValue;
+        foreach (var col in m_colliderList)
+        {
+            if (col.transform == transform ||
+                col.transform.IsChildOf(transform) ||
+                col.transform == m_weapon.script.transform)
+                continue;
 
-				foreach (var col in m_colliderList)
-				{
-					if (col.transform == transform ||
-						col.transform.IsChildOf(transform) ||
-						col.transform == m_weapon.script.transform)
-						continue;
+            Vector3 hitOffset = col.transform.position - m_player.transform.position;
+					float angleToHit = Vector3.Angle(throwDirectonVector, hitOffset.normalized);
+					float distance = hitOffset.magnitude;
 
-					Vector3 hitOffset = col.transform.position - m_player.transform.position;
-					Vector3 directionToHit = hitOffset.normalized;
-					float angleToHit = Vector3.Angle(throwDirectonVector, directionToHit);
+					Debug.Log($"Checking target: {col.name}, Distance: {distance}, Angle: {angleToHit}");
 
-					if (angleToHit < autoAimAngle * 0.5f)
-					{
-						switch (autoAimSelection)
+            if (angleToHit < autoAimAngle * 0.5f)
+            {
+						float score = distanceWeight * (distance / autoAimDistance) + angleWeight * (angleToHit / (autoAimAngle * 0.5f));
+						if (score < min && IsAutoAimTarget(col))
 						{
-							case AutoAimSelection.Closest:
-								{
-									var mag = hitOffset.magnitude;
-									if (mag < min && IsAutoAimTarget(col))
-									{
-										min = mag;
-										m_autoAimCollider = col;
-									}
-								}
-								break;
-							case AutoAimSelection.SmallestAngle:
-								{
-									if (angleToHit < min && IsAutoAimTarget(col))
-									{
-										min = angleToHit;
-										m_autoAimCollider = col;
-									}
-								}
-								break;
-							case AutoAimSelection.Combined:
-								{
-									var mag = hitOffset.magnitude;
-									var dst = mag / autoAimDistance;
-									var ang = angleToHit / (autoAimAngle * 0.5f);
-									dst = Mathf.Sqrt(dst * dst + ang * ang);
-									if (dst < min && IsAutoAimTarget(col))
-									{
-										min = dst;
-										m_autoAimCollider = col;
-									}
-								}
-								break;
-							default:
-								break;
+							min = score;
+							m_autoAimCollider = col;
 						}
 					}
-				}
-			}
+        }
+    }
 
-			if (m_prevAutoAimCollider != m_autoAimCollider)
-			{
-				if (m_prevAutoAimCollider != null)
-				{
-					if (followAimedTarget)
-						m_weapon.SetTarget(null);
+    if (m_prevAutoAimCollider != m_autoAimCollider)
+    {
+        if (m_prevAutoAimCollider != null)
+        {
+            if (followAimedTarget)
+                m_weapon.SetTarget(null);
 
-					OnAutoAimUnselected?.Invoke(m_prevAutoAimCollider);
-				}
+            OnAutoAimUnselected?.Invoke(m_prevAutoAimCollider);
+        }
 
-				if (m_autoAimCollider != null)
-				{
-					if (followAimedTarget)
-						m_weapon.SetTarget(m_autoAimCollider.transform);
+        if (m_autoAimCollider != null)
+        {
+            if (followAimedTarget)
+                m_weapon.SetTarget(m_autoAimCollider.transform);
 
-					OnAutoAimSelected?.Invoke(m_autoAimCollider);
-				}
+            OnAutoAimSelected?.Invoke(m_autoAimCollider);
+        }
 
-				m_prevAutoAimCollider = m_autoAimCollider;
-			}
+        m_prevAutoAimCollider = m_autoAimCollider;
+    }
 
-			if (m_autoAimCollider != null)
-			{
-				m_autoAimFrame = Time.frameCount;
-			}
-		}
+    if (m_autoAimCollider != null)
+    {
+        m_autoAimFrame = Time.frameCount;
+    }
+}
 
 
 		Vector3 GetThrowVector(bool autoAim = false)
