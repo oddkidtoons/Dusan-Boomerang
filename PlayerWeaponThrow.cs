@@ -459,7 +459,8 @@ namespace PLAYERTWO.PlatformerProject
 						m_colliderBuffer[i].attachedRigidbody.WakeUp();
 				}
 
-				breakable.Break();
+				int damageToBreak = breakable.HP; // Get the remaining HP
+breakable.ApplyDamage(damageToBreak); // Apply sufficient damage to break it
 
 				return true;
 			}
