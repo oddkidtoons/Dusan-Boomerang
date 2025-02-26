@@ -1,12 +1,10 @@
-// License: 
-// This script is free to use exclusively with Platformer Project from PLAYER TWO
-// If you want to use this differently, contact me on Discord at Dusan#6720
 
 using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.InputSystem;
+using EmeraldAI;
 
 namespace PLAYERTWO.PlatformerProject
 {
@@ -46,12 +44,17 @@ namespace PLAYERTWO.PlatformerProject
 			Combined
 		}
 
+		[Header("Debug Settings")]
+public bool debugInEditMode = false; // Toggle to enable debug gizmos in edit mode
+
+
 		[Header("Input Action")]
 		public InputActionAsset actions;
 		public string throwActionName;
 		public string returnActionName;
 
 		[Header("Weapon")]
+		 public BoomerangWeapon boomerangWeapon;
 		public Transform weaponObject;
 		public ThrowDirection throwDirection = ThrowDirection.PlayerForward;
 
@@ -81,7 +84,11 @@ namespace PLAYERTWO.PlatformerProject
 		public bool followAimedTarget = true;
 
 		[Tooltip("How much damage receives enemy after hit")]
+		[Header("PP Enemy Damage")]
 		public int enemyDamage = 1;
+public int minEnemyDamage = 1; // Minimum damage for enemies
+public int maxEnemyDamage = 10; // Maximum damage for enemies
+
 		[Tooltip("Whether or not weapon collects items")]
 		public bool collectItems = true;
 		[Tooltip("Whether or not weapon breaks items")]
@@ -94,6 +101,43 @@ namespace PLAYERTWO.PlatformerProject
 
 		public UnityEvent<Collider> OnAutoAimSelected;
 		public UnityEvent<Collider> OnAutoAimUnselected;
+
+	[Header("Emerald AI Settings")]
+	//public int damageAmount = 1
+public int minEmeraldDamage = 5; // Minimum damage for Emerald AI
+public int maxEmeraldDamage = 15; // Maximum damage for Emerald AI
+public int RagdollForceAmount = 50;
+public float criticalHitChance = 0.2f; // 20% chance for a critical hit
+public float criticalMultiplier = 2.0f; // Critical hit multiplier
+private HashSet<GameObject> recentlyHitEnemies = new HashSet<GameObject>();
+public float hitResetTime = 0.5f; // Cooldown duration in seconds
+[Header("On Enemy Hit Events")]
+public UnityEvent<GameObject> OnEnemyHit;
+
+// Function to calculate damage
+private int CalculateDamage(int minDamage, int maxDamage)
+{
+    // Generate random damage within the range
+    int damage = UnityEngine.Random.Range(minDamage, maxDamage + 1);
+
+    // Check for critical hit
+    if (UnityEngine.Random.value <= criticalHitChance)
+    {
+        damage = Mathf.RoundToInt(damage * criticalMultiplier);
+        Debug.Log("Critical Hit! Damage: " + damage);
+    }
+
+    return damage;
+}
+
+		[Header("Orb Collection Settings")]
+        public List<string> orbTags; // Tags for collectible orbs
+        public UnityEvent<Collider> OnOrbCollected; // Event triggered when an orb is collected
+
+        [Tooltip("Reference to the OrbCollector script")]
+        public OrbCollector orbCollector; // Reference to the OrbCollector script
+
+
 
 		InputAction m_action;
 		InputAction m_returnAction;
@@ -129,6 +173,11 @@ namespace PLAYERTWO.PlatformerProject
 				if (!string.IsNullOrEmpty(returnActionName))
 					m_returnAction = actions[returnActionName];
 			}
+			 // Make sure boomerangWeapon is assigned in the Inspector
+            if (boomerangWeapon == null)
+            {
+                Debug.LogError("BoomerangWeapon component not assigned in PlayerWeaponThrow!");
+            }
 
 			m_player = GetComponent<Player>();
 
@@ -137,6 +186,8 @@ namespace PLAYERTWO.PlatformerProject
 
 			m_weapon.onHit = OnWeaponHit;
 		}
+
+		
 
 		private void OnDestroy()
 		{
@@ -200,11 +251,14 @@ namespace PLAYERTWO.PlatformerProject
 				return false;
 
 			// reachability needs to be handled after visibility... 
-			//if (!m_weapon.IsWithinReach(coll.transform, m_weapon.Speed * autoReturnAfter))
-			//	return false;
+		
 
 			if (!m_weapon.IsWithinReach(coll.transform, autoAimDistance))
     return false;
+
+	// Check orb tags explicitly
+    if (orbTags.Contains(coll.tag))
+        return true;
 
 
 			if (autoAimRigidBodies && coll.attachedRigidbody != null)
@@ -233,6 +287,7 @@ namespace PLAYERTWO.PlatformerProject
 
 		private void UpdateAutoAim(Vector3 throwDirectonVector, bool forceReset = false)
 {
+	
     if (!forceReset && m_autoAimCollider != null && m_autoAimFrame == Time.frameCount)
         return;
 
@@ -300,9 +355,46 @@ namespace PLAYERTWO.PlatformerProject
     }
 
     if (m_autoAimCollider != null)
-    {
-        m_autoAimFrame = Time.frameCount;
-    }
+            {
+                m_autoAimFrame = Time.frameCount;
+
+                if (m_autoAimCollider.TryGetComponent<EmeraldAI.EmeraldHealth>(out _))
+                {
+                    RaycastHit hit;
+
+                    Vector3 raycastOrigin = m_autoAimCollider.transform.position + Vector3.up * 0.5f;
+
+                    if (Physics.Raycast(raycastOrigin, -Vector3.up, out hit, 10f, Physics.DefaultRaycastLayers))
+                    {
+                        if (boomerangWeapon != null)
+                        {
+                            Vector3 throwDirection = (hit.point - boomerangWeapon.ThrowTransform.position).normalized;
+
+                            m_weapon.ThrowWeapon(throwDirection);
+
+                            UpdateCrosshairTarget(m_autoAimCollider); // Call UpdateCrosshairTarget
+
+                            m_autoAimCollider = null;
+
+                            return;
+                        }
+                        else
+                        {
+                            Debug.LogError("BoomerangWeapon component not assigned in PlayerWeaponThrow.");
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogError("Raycast failed to find ground below enemy. Origin: " + raycastOrigin);
+                        m_weapon.SetTarget(m_autoAimCollider.transform);
+                        UpdateCrosshairTarget(m_autoAimCollider);
+                        return;
+                    }
+                }
+            }
+
+	
 }
 
 
@@ -338,46 +430,60 @@ namespace PLAYERTWO.PlatformerProject
 
 			return throwDirectionVector;
 		}
+		private void UpdateCrosshairTarget(Collider target)
+        {
+            // Your implementation to update the crosshair
+            // This could involve setting the crosshair's position, changing its sprite, etc.
+            if (target != null)
+            {
+                Debug.Log("Crosshair Target: " + target.name);
+            }
+        }
 
-		private void OnDrawGizmos()
-		{
-			if (m_player == null && !TryGetComponent(out m_player))
-				return;
 
-			if (m_player != null)
-			{
-				var throwDirectonVector = GetThrowVector(false);
+	private void OnDrawGizmos()
+{
+    if (!debugInEditMode && !Application.isPlaying) return; // Only run in play mode or when debug is enabled
 
-				if (Physics.Raycast(m_player.transform.position, throwDirectonVector, out var hit, float.MaxValue, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
-				{
-					Gizmos.color = Color.yellow;
-					Gizmos.DrawLine(m_player.transform.position, hit.point);
-				}
-				else
-				{
-					Gizmos.color = Color.yellow;
-					Gizmos.DrawLine(m_player.transform.position, m_player.transform.position + throwDirectonVector * autoAimDistance);
-				}
+    if (m_player == null && !TryGetComponent(out m_player))
+        return;
 
-				Vector3 left = Vector3.Cross(throwDirectonVector, m_player.transform.up).normalized;
-				var halfBase = Mathf.Abs(Mathf.Tan(Mathf.Deg2Rad * autoAimAngle / 2) * autoAimDistance);
-				var farLeft = m_player.transform.position + throwDirectonVector * autoAimDistance + halfBase * left;
-				var farRight = m_player.transform.position + throwDirectonVector * autoAimDistance + halfBase * -left;
+    if (m_player != null)
+    {
+        var throwDirectonVector = GetThrowVector(false);
 
-				Gizmos.color = Color.yellow;
-				Gizmos.DrawLine(m_player.transform.position, farLeft);
-				Gizmos.DrawLine(m_player.transform.position, farRight);
-				Gizmos.DrawLine(farLeft, farRight);
+        if (Physics.Raycast(m_player.transform.position, throwDirectonVector, out var hit, float.MaxValue, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+        {
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawLine(m_player.transform.position, hit.point);
+        }
+        else
+        {
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawLine(m_player.transform.position, m_player.transform.position + throwDirectonVector * autoAimDistance);
+        }
 
-				UpdateAutoAim(throwDirectonVector);
-				if (m_autoAimCollider != null)
-				{
-					Gizmos.color = Color.red;
-					Gizmos.DrawLine(m_autoAimCollider.bounds.center, m_player.transform.position);
-					Gizmos.DrawWireCube(m_autoAimCollider.bounds.center, m_autoAimCollider.bounds.size);
-				}
-			}
-		}
+        Vector3 left = Vector3.Cross(throwDirectonVector, m_player.transform.up).normalized;
+        var halfBase = Mathf.Abs(Mathf.Tan(Mathf.Deg2Rad * autoAimAngle / 2) * autoAimDistance);
+        var farLeft = m_player.transform.position + throwDirectonVector * autoAimDistance + halfBase * left;
+        var farRight = m_player.transform.position + throwDirectonVector * autoAimDistance + halfBase * -left;
+
+        Gizmos.color = Color.yellow;
+        Gizmos.DrawLine(m_player.transform.position, farLeft);
+        Gizmos.DrawLine(m_player.transform.position, farRight);
+        Gizmos.DrawLine(farLeft, farRight);
+
+        UpdateAutoAim(throwDirectonVector);
+        if (m_autoAimCollider != null)
+        {
+            Gizmos.color = Color.red;
+            Gizmos.DrawLine(m_autoAimCollider.bounds.center, m_player.transform.position);
+            Gizmos.DrawWireCube(m_autoAimCollider.bounds.center, m_autoAimCollider.bounds.size);
+        }
+    }
+}
+
+
 
 		protected virtual void Update()
 		{
@@ -414,42 +520,132 @@ namespace PLAYERTWO.PlatformerProject
 		}
 
 		bool OnWeaponHit(Collider collider)
-		{
-			// handle collectables, breakables and enemies
-			if (collectItems && collider.TryGetComponent(out Collectable collectable))
-			{
-				collectable.Collect(m_player);
-				return true;
-			}
-			else if (breakItems && collider.TryGetComponent(out Breakable breakable))
-			{
-				int count = OverlapBox(
-					collider.bounds.center, 
-					collider.bounds.size*2, 
-					ref m_colliderBuffer, 
-					Quaternion.identity, 
-					Physics.DefaultRaycastLayers, 
-					QueryTriggerInteraction.Ignore);
+{
 
-				for (int i = 0; i < count; i++)
-				{
-					if (m_colliderBuffer[i].attachedRigidbody != null &&
-						m_colliderBuffer[i].attachedRigidbody.IsSleeping())
-						m_colliderBuffer[i].attachedRigidbody.WakeUp();
-				}
+	GameObject hitObject = collider.gameObject;
 
-				int damageToBreak = breakable.HP; // Get the remaining HP
-breakable.ApplyDamage(damageToBreak); // Apply sufficient damage to break it
+    // Skip recently hit enemies
+    if (recentlyHitEnemies.Contains(hitObject))
+    {
+        return false; // Ignore this hit
+    }
 
-				return true;
-			}
-			else if (enemyDamage > 0 && collider.TryGetComponent(out Enemy enemy))
-			{
-				enemy.ApplyDamage(enemyDamage, m_weapon.script.transform.position);
-				return false;
-			}
+    // Handle damage to enemies or location-based damage areas
+   if (collider.TryGetComponent<LocationBasedDamageArea>(out var damageArea))
+    {
+        // Get the root enemy object
+        GameObject enemyRoot = damageArea.transform.root.gameObject;
 
-			return collider.isTrigger;
-		}
+        // Skip if the root object has already been hit
+        if (recentlyHitEnemies.Contains(enemyRoot))
+        {
+            return false;
+        }
+
+        // Calculate random damage for Emerald AI
+        int emeraldDamage = CalculateDamage(minEmeraldDamage, maxEmeraldDamage);
+
+        // Apply damage to the Emerald AI via the location-based damage system
+        damageArea.DamageArea(emeraldDamage, m_weapon.script.transform, RagdollForceAmount);
+
+		  // Trigger the OnEnemyHit event
+        OnEnemyHit?.Invoke(enemyRoot);
+
+        // Mark the root enemy as recently hit
+        recentlyHitEnemies.Add(enemyRoot);
+        StartCoroutine(RemoveFromRecentlyHit(enemyRoot));
+        return true;
+    }
+    else if (collider.TryGetComponent<Enemy>(out var enemy))
+    {
+        // Calculate random damage for enemies
+        int enemyDamage = CalculateDamage(minEnemyDamage, maxEnemyDamage);
+
+        // Apply damage to the enemy directly
+        enemy.ApplyDamage(enemyDamage, m_weapon.script.transform.position);
+
+		// Trigger the OnEnemyHit event
+        OnEnemyHit?.Invoke(hitObject);
+
+        // Mark the enemy as recently hit
+        recentlyHitEnemies.Add(hitObject);
+        StartCoroutine(RemoveFromRecentlyHit(hitObject));
+        return true;
+    }
+
+
+	// Handle orb collection
+            if (orbTags.Contains(collider.tag))
+            {
+                OnOrbCollected?.Invoke(collider); // Trigger the orb collection event
+                UpdateOrbCollector(collider.tag); // Notify OrbCollector
+                Destroy(collider.gameObject); // Destroy the orb
+                return true;
+            }
+    // Handle collectables, breakables, and enemies
+    if (collectItems && collider.TryGetComponent(out Collectable collectable))
+    {
+        collectable.Collect(m_player);
+        return true;
+    }
+    else if (breakItems && collider.TryGetComponent(out Breakable breakable))
+    {
+        int count = OverlapBox(
+            collider.bounds.center,
+            collider.bounds.size * 2,
+            ref m_colliderBuffer,
+            Quaternion.identity,
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore);
+
+        for (int i = 0; i < count; i++)
+        {
+            if (m_colliderBuffer[i].attachedRigidbody != null &&
+                m_colliderBuffer[i].attachedRigidbody.IsSleeping())
+                m_colliderBuffer[i].attachedRigidbody.WakeUp();
+        }
+
+        int damageToBreak = breakable.HP; // Get the remaining HP
+        breakable.ApplyDamage(damageToBreak); // Apply sufficient damage to break it
+
+        return true;
+    }
+
+    return collider.isTrigger;
+}
+
+ private void UpdateOrbCollector(string orbTag)
+        {
+            if (orbCollector == null) return;
+
+            // Update OrbCollector based on the orb tag
+            if (orbCollector.orbTypeLookup.TryGetValue(orbTag, out var orbType))
+            {
+                orbCollector.collectedOrbs[orbType.orbName]++;
+                orbCollector.UpdateUIText(orbType.orbName);
+
+                // Invoke any relevant events in OrbCollector
+                if (orbCollector.collectedOrbs[orbType.orbName] >= orbType.requiredCount)
+                {
+                    orbType.onAbilityGained.Invoke();
+                }
+                if (orbCollector.collectedOrbs[orbType.orbName] >= orbType.subGoalCount && orbType.subGoalCount > 0)
+                {
+                    orbType.onAbilitySubGained.Invoke();
+                }
+
+                // Check if all orbs are maxed
+                if (orbCollector.AllOrbsMaxed())
+                {
+                    orbCollector.onAllOrbsMaxed.Invoke();
+                }
+            }
+        }
+	private System.Collections.IEnumerator RemoveFromRecentlyHit(GameObject hitObject)
+{
+    yield return new WaitForSeconds(hitResetTime); // Wait for the cooldown period
+    recentlyHitEnemies.Remove(hitObject); // Remove the object from the set
+}
+
 	}
 }
